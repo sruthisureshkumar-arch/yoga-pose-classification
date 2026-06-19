@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>3D Digital Twin — Virtual Puppet Test</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      overflow: hidden;
+      background: #0a0a0f;
+      font-family: 'Courier New', monospace;
+    }
+
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      color: #00ff88;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 8px #00ff88;
+      pointer-events: none;
+      line-height: 1.8;
+    }
+
+    #status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #00ff88;
+      box-shadow: 0 0 8px #00ff88;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    /* Puppet panel (replaces webcam PiP) */
+    #puppet-panel {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 340px;
+      background: #111122;
+      border: 1px solid #00ff8844;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 0 20px #00ff8822;
+      z-index: 50;
+    }
+
+    #puppet-panel .header {
+      background: #0d0d1a;
+      padding: 8px 12px;
+      color: #00ff88;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      border-bottom: 1px solid #00ff8833;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    #puppet-canvas {
+      display: block;
+      width: 340px;
+      height: 400px;
+      cursor: grab;
+      background: #0a0a14;
+    }
+
+    #puppet-canvas:active {
+      cursor: grabbing;
+    }
+
+    #puppet-controls {
+      padding: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      border-top: 1px solid #00ff8833;
+    }
+
+    #puppet-controls button {
+      flex: 1 1 auto;
+      min-width: 60px;
+      padding: 5px 8px;
+      background: #1a1a2e;
+      color: #00ff88;
+      border: 1px solid #00ff8844;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      cursor: pointer;
+      letter-spacing: 0.05em;
+      transition: all 0.2s;
+    }
+
+    #puppet-controls button:hover {
+      background: #00ff8822;
+      border-color: #00ff88;
+    }
+
+    #puppet-controls button.active {
+      background: #00ff8833;
+      border-color: #00ff88;
+      color: #fff;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a0f;
+      color: #00ff88;
+      font-size: 14px;
+      letter-spacing: 0.15em;
+      z-index: 100;
+    }
+
+    #loading-bar-wrap {
+      width: 240px;
+      height: 2px;
+      background: #1a1a2e;
+      margin-top: 20px;
+      border-radius: 2px;
+    }
+
+    #loading-bar {
+      height: 100%;
+      width: 0%;
+      background: #00ff88;
+      border-radius: 2px;
+      transition: width 0.3s;
+    }
+
+    #joint-label {
+      position: fixed;
+      pointer-events: none;
+      background: #00ff88cc;
+      color: #000;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      display: none;
+      z-index: 999;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+
+<body>
+
+  <div id="loading">
+    <div>INITIALISING DIGITAL TWIN — TEST MODE</div>
+    <div id="loading-bar-wrap">
+      <div id="loading-bar"></div>
+    </div>
+  </div>
+  <div id="canvas-container"></div>
+  <div id="hud">
+    <div><span id="status-dot"></span><span id="status-text">Virtual puppet active</span></div>
+    <div id="fps-counter">FPS: —</div>
+    <div id="landmark-count">Landmarks: 33 (virtual)</div>
+    <div style="margin-top:4px; color:#ffaa00; font-size:10px;">TEST MODE — drag joints on puppet</div>
+  </div>
+  <div id="joint-label"></div>
+
+  <div id="puppet-panel">
+    <div class="header">
+      <span>▶ VIRTUAL PUPPET</span>
+      <span id="dragging-info" style="color:#ffaa00;">drag any joint</span>
+    </div>
+    <canvas id="puppet-canvas" width="340" height="400"></canvas>
+    <div id="puppet-controls">
+      <button onclick="setPose('tpose')">T-POSE</button>
+      <button onclick="setPose('armsUp')">ARMS UP</button>
+      <button onclick="setPose('squat')">SQUAT</button>
+      <button onclick="setPose('wave')">WAVE</button>
+      <button onclick="setPose('kick')">KICK</button>
+      <button onclick="toggleAnim('walk')" id="btn-walk">▶ WALK</button>
+      <button onclick="toggleAnim('dance')" id="btn-dance">▶ DANCE</button>
+      <button onclick="setPose('idle')">RESET</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const LM = {
+      NOSE: 0, LEFT_EAR: 7, RIGHT_EAR: 8,
+      LEFT_SHOULDER: 11, RIGHT_SHOULDER: 12,
+      LEFT_ELBOW: 13, RIGHT_ELBOW: 14,
+      LEFT_WRIST: 15, RIGHT_WRIST: 16,
+      LEFT_HIP: 23, RIGHT_HIP: 24,
+      LEFT_KNEE: 25, RIGHT_KNEE: 26,
+      LEFT_ANKLE: 27, RIGHT_ANKLE: 28,
+    };
+
+    // ── Scene ──────────────────────────────────────────────────────────────────
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0f);
+    scene.fog = new THREE.Fog(0x0a0a0f, 10, 30);
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 100);
+    camera.position.set(0, 1.4, 3.5);
+    camera.lookAt(0, 1.0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+    controls.target.set(0, 1.0, 0); controls.minDistance = 1.0; controls.maxDistance = 8.0;
+    controls.update();
+
+    scene.add(new THREE.AmbientLight(0x8899ff, 0.35));
+    const kl = new THREE.DirectionalLight(0xffffff, 1.2);
+    kl.position.set(2, 4, 3); kl.castShadow = true; kl.shadow.mapSize.set(1024, 1024); scene.add(kl);
+    const fl = new THREE.DirectionalLight(0x4488ff, 0.4); fl.position.set(-3, 2, -2); scene.add(fl);
+    const rl = new THREE.DirectionalLight(0x00ff88, 0.3); rl.position.set(0, 3, -4); scene.add(rl);
+
+    const grid = new THREE.GridHelper(12, 20, 0x00ff88, 0x112211);
+    grid.material.opacity = 0.25; grid.material.transparent = true; scene.add(grid);
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(12, 12),
+      new THREE.MeshStandardMaterial({ color: 0x0d0d1a, roughness: 1 })
+    );
+    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ── Coordinate conversion ────────────────────────────────────────────────
+    function lmToVec3(lm) {
+      return new THREE.Vector3(
+        (lm.x - 0.5) * 2,
+        -(lm.y - 0.5) * 2,
+        -lm.z
+      );
+    }
+    const smoothStore = {};
+    function smoothQuaternion(name, q, alpha) {
+      if (!smoothStore[name]) smoothStore[name] = q.clone();
+      smoothStore[name].slerp(q, alpha);
+      return smoothStore[name];
+    }
+    function getBoneRestDir(bone) {
+      if (!bone || !bone.children.length) return new THREE.Vector3(0, 1, 0);
+      const child = bone.children[0];
+      const dir = new THREE.Vector3()
+        .subVectors(child.position, new THREE.Vector3(0, 0, 0))
+        .normalize();
+      return dir;
+    }
+    function applyBoneRotation(bone, startLM, endLM, restDir, alpha, invertDir = false) {
+      if (!bone) return;
+      let worldDir = new THREE.Vector3().subVectors(endLM, startLM).normalize();
+      if (invertDir) worldDir.negate();
+      const pq = new THREE.Quaternion();
+      if (bone.parent) bone.parent.getWorldQuaternion(pq);
+      const localDir = worldDir.clone().applyQuaternion(pq.clone().invert());
+      const q = new THREE.Quaternion().setFromUnitVectors(
+        restDir.clone().normalize(),
+        localDir.normalize()
+      );
+      bone.quaternion.copy(smoothQuaternion(bone.name, q, alpha));
+    }
+
+    const R = {
+      LeftArm: new THREE.Vector3(1, 0, 0),
+      RightArm: new THREE.Vector3(-1, 0, 0),
+      LeftForeArm: new THREE.Vector3(1, 0, 0),
+      RightForeArm: new THREE.Vector3(-1, 0, 0),
+      LeftUpLeg: new THREE.Vector3(0, -1, 0),
+      RightUpLeg: new THREE.Vector3(0, -1, 0),
+      LeftLeg: new THREE.Vector3(0, 0, 1),
+      RightLeg: new THREE.Vector3(0, 1, 0),
+      Spine: new THREE.Vector3(0, 1, 0),
+      Spine1: new THREE.Vector3(0, 1, 0),
+      Neck: new THREE.Vector3(0, 1, 0),
+    };
+
+    // ── Avatar ─────────────────────────────────────────────────────────────────
+    const bones = {};
+    const restQuaternions = {};
+    let avatarLoaded = false;
+
+    new GLTFLoader().load(
+      '/static/avatar.glb',
+      (gltf) => {
+        const model = gltf.scene;
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const scale = 1.75 / size.y;
+        model.scale.setScalar(scale);
+        model.position.set(
+          -box.getCenter(new THREE.Vector3()).x * scale,
+          -box.min.y * scale,
+          -box.getCenter(new THREE.Vector3()).z * scale
+        );
+        model.traverse((obj) => {
+          if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+          if (obj.name) { bones[obj.name] = obj; restQuaternions[obj.name] = obj.quaternion.clone(); }
+        });
+        scene.add(model);
+        renderer.render(scene, camera);
+
+        // Capture actual rest directions from the loaded skeleton
+        const captureRestDir = (boneName) => {
+          const b = bones[boneName];
+          if (b && b.children.length) {
+            return new THREE.Vector3()
+              .subVectors(b.children[0].position, new THREE.Vector3(0, 0, 0))
+              .normalize();
+          }
+          return null;
+        };
+        R.LeftLeg = captureRestDir('mixamorig1_LeftLeg') || R.LeftLeg;
+        R.RightLeg = captureRestDir('mixamorig1_RightLeg') || R.RightLeg;
+
+        avatarLoaded = true;
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('loading-bar').style.width = '100%';
+      },
+      (xhr) => { if (xhr.total) document.getElementById('loading-bar').style.width = Math.round(xhr.loaded / xhr.total * 90) + '%'; },
+      (err) => { console.error("❌ GLB error:", err); }
+    );
+
+    // ── Pose application ───────────────────────────────────────────────────────
+    function applyPoseToAvatar(lm) {
+      if (!avatarLoaded) return;
+
+      const ALPHA = 0.22;
+      const ALPHA_SLOW = ALPHA * 0.55;
+
+      const lS = lmToVec3(lm[LM.LEFT_SHOULDER]);
+      const rS = lmToVec3(lm[LM.RIGHT_SHOULDER]);
+      const lE = lmToVec3(lm[LM.LEFT_ELBOW]);
+      const rE = lmToVec3(lm[LM.RIGHT_ELBOW]);
+      const lW = lmToVec3(lm[LM.LEFT_WRIST]);
+      const rW = lmToVec3(lm[LM.RIGHT_WRIST]);
+      const lH = lmToVec3(lm[LM.LEFT_HIP]);
+      const rH = lmToVec3(lm[LM.RIGHT_HIP]);
+      const lK = lmToVec3(lm[LM.LEFT_KNEE]);
+      const rK = lmToVec3(lm[LM.RIGHT_KNEE]);
+      const lA = lmToVec3(lm[LM.LEFT_ANKLE]);
+      const rA = lmToVec3(lm[LM.RIGHT_ANKLE]);
+      const nose = lmToVec3(lm[LM.NOSE]);
+      const sMid = new THREE.Vector3().addVectors(lS, rS).multiplyScalar(0.5);
+      const hMid = new THREE.Vector3().addVectors(lH, rH).multiplyScalar(0.5);
+
+      applyBoneRotation(bones['mixamorig1_Spine'], hMid, sMid, R.Spine, ALPHA_SLOW);
+      applyBoneRotation(bones['mixamorig1_Spine1'], hMid, sMid, R.Spine1, ALPHA_SLOW);
+      applyBoneRotation(bones['mixamorig1_Neck'], sMid, nose, R.Neck, ALPHA_SLOW);
+      applyBoneRotation(bones['mixamorig1_LeftArm'], lS, lE, R.LeftArm, ALPHA);
+      applyBoneRotation(bones['mixamorig1_LeftForeArm'], lE, lW, R.LeftForeArm, ALPHA);
+      applyBoneRotation(bones['mixamorig1_RightArm'], rS, rE, R.RightArm, ALPHA);
+      applyBoneRotation(bones['mixamorig1_RightForeArm'], rE, rW, R.RightForeArm, ALPHA);
+
+      const kneesVisible = lm[LM.LEFT_KNEE].visibility > 0.40 &&
+        lm[LM.RIGHT_KNEE].visibility > 0.40;
+      const anklesVisible = lm[LM.LEFT_ANKLE].visibility > 0.35 &&
+        lm[LM.RIGHT_ANKLE].visibility > 0.35;
+
+      if (kneesVisible) {
+        applyBoneRotation(bones['mixamorig1_LeftUpLeg'], lK, lH, R.LeftUpLeg, ALPHA);
+        applyBoneRotation(bones['mixamorig1_RightUpLeg'], rK, rH, R.RightUpLeg, ALPHA);
+        fixLegTwist(bones['mixamorig1_LeftUpLeg']);
+        fixLegTwist(bones['mixamorig1_RightUpLeg']);
+      }
+      if (kneesVisible && anklesVisible) {
+        applyBoneRotation(bones['mixamorig1_LeftLeg'], lA, lK, R.LeftLeg, ALPHA, true);
+        applyBoneRotation(bones['mixamorig1_RightLeg'], rA, rK, R.RightLeg, ALPHA, true);
+        fixFootPitch(bones['mixamorig1_LeftFoot']);
+        fixFootPitch(bones['mixamorig1_RightFoot']);
+      }
+    }
+    function fixFootPitch(bone) {
+      if (!bone) return;
+      const euler = new THREE.Euler().setFromQuaternion(bone.quaternion, 'XYZ');
+      if (euler.x < 0) euler.x = 0;
+      bone.quaternion.setFromEuler(euler);
+    }
+    function fixLegTwist(bone) {
+      if (!bone) return;
+      const twist = new THREE.Quaternion();
+      twist.setFromAxisAngle(new THREE.Vector3(0, -1, 0), Math.PI);
+      bone.quaternion.multiply(twist);
+    }
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  VIRTUAL PUPPET — Interactive 2D stick figure with draggable joints
+    // ══════════════════════════════════════════════════════════════════════════
+
+    const puppetCanvas = document.getElementById('puppet-canvas');
+    const pctx = puppetCanvas.getContext('2d');
+    const W = 340, H = 400;
+
+    // Joint names for labels
+    const JOINT_NAMES = {
+      0: 'nose', 1: 'left_eye_in', 2: 'left_eye', 3: 'left_eye_out',
+      4: 'right_eye_in', 5: 'right_eye', 6: 'right_eye_out',
+      7: 'left_ear', 8: 'right_ear', 9: 'mouth_left', 10: 'mouth_right',
+      11: 'L_shoulder', 12: 'R_shoulder', 13: 'L_elbow', 14: 'R_elbow',
+      15: 'L_wrist', 16: 'R_wrist', 17: 'L_pinky', 18: 'R_pinky',
+      19: 'L_index', 20: 'R_index', 21: 'L_thumb', 22: 'R_thumb',
+      23: 'L_hip', 24: 'R_hip', 25: 'L_knee', 26: 'R_knee',
+      27: 'L_ankle', 28: 'R_ankle', 29: 'L_heel', 30: 'R_heel',
+      31: 'L_foot', 32: 'R_foot'
+    };
+
+    // Key joints the user can drag (indices into landmarks array)
+    const DRAGGABLE = [
+      0,                          // nose
+      7, 8,                       // ears
+      11, 12,                     // shoulders
+      13, 14,                     // elbows
+      15, 16,                     // wrists
+      17, 18, 19, 20, 21, 22,    // hands (pinky, index, thumb)
+      23, 24,                     // hips
+      25, 26,                     // knees
+      27, 28,                     // ankles
+      29, 30, 31, 32             // heels & feet
+    ];
+
+    // Connections to draw
+    const CONNECTIONS = [
+      [0, 7], [0, 8],                             // nose to ears
+      [11, 12],                                    // shoulders
+      [11, 0], [12, 0],                            // shoulders to nose
+      [11, 13], [13, 15],                          // left arm
+      [12, 14], [14, 16],                          // right arm
+      [15, 17], [15, 19], [15, 21],                // left hand fingers
+      [16, 18], [16, 20], [16, 22],                // right hand fingers
+      [11, 23], [12, 24],                          // torso sides
+      [23, 24],                                    // hips
+      [23, 25], [25, 27],                          // left leg
+      [24, 26], [26, 28],                          // right leg
+      [27, 29], [27, 31],                          // left foot
+      [28, 30], [28, 32],                          // right foot
+    ];
+
+    // ── Default "idle" pose in normalized coords (0-1 range) ──────────────
+    function makeIdlePose() {
+      const lm = [];
+      for (let i = 0; i < 33; i++) {
+        lm.push({ x: 0.5, y: 0.5, z: 0, visibility: 1.0 });
+      }
+
+      // Head
+      lm[0]  = { x: 0.50, y: 0.12, z: 0, visibility: 1 };  // nose
+      lm[7]  = { x: 0.44, y: 0.10, z: 0, visibility: 1 };  // left ear
+      lm[8]  = { x: 0.56, y: 0.10, z: 0, visibility: 1 };  // right ear
+
+      // Shoulders
+      lm[11] = { x: 0.38, y: 0.25, z: 0, visibility: 1 };  // left shoulder
+      lm[12] = { x: 0.62, y: 0.25, z: 0, visibility: 1 };  // right shoulder
+
+      // Arms (natural resting at sides, slight forward z so they don't go behind body)
+      lm[13] = { x: 0.30, y: 0.37, z: -0.08, visibility: 1 };  // left elbow
+      lm[14] = { x: 0.70, y: 0.37, z: -0.08, visibility: 1 };  // right elbow
+      lm[15] = { x: 0.28, y: 0.48, z: -0.06, visibility: 1 };  // left wrist
+      lm[16] = { x: 0.72, y: 0.48, z: -0.06, visibility: 1 };  // right wrist
+
+      // Hands (spread from wrists)
+      lm[17] = { x: 0.26, y: 0.50, z: -0.06, visibility: 1 };  // L pinky
+      lm[18] = { x: 0.74, y: 0.50, z: -0.06, visibility: 1 };  // R pinky
+      lm[19] = { x: 0.27, y: 0.51, z: -0.07, visibility: 1 };  // L index
+      lm[20] = { x: 0.73, y: 0.51, z: -0.07, visibility: 1 };  // R index
+      lm[21] = { x: 0.29, y: 0.49, z: -0.05, visibility: 1 };  // L thumb
+      lm[22] = { x: 0.71, y: 0.49, z: -0.05, visibility: 1 };  // R thumb
+
+      // Hips
+      lm[23] = { x: 0.42, y: 0.52, z: 0, visibility: 1 };  // left hip
+      lm[24] = { x: 0.58, y: 0.52, z: 0, visibility: 1 };  // right hip
+
+      // Legs (knees have negative z to push them forward)
+      lm[25] = { x: 0.42, y: 0.70, z: -0.05, visibility: 1 };  // left knee
+      lm[26] = { x: 0.58, y: 0.70, z: -0.05, visibility: 1 };  // right knee
+      lm[27] = { x: 0.42, y: 0.88, z: 0, visibility: 1 };    // left ankle
+      lm[28] = { x: 0.58, y: 0.88, z: 0, visibility: 1 };    // right ankle
+
+      // Feet (heels behind, toes in front)
+      lm[29] = { x: 0.42, y: 0.90, z: 0.02, visibility: 1 };   // L heel
+      lm[30] = { x: 0.58, y: 0.90, z: 0.02, visibility: 1 };   // R heel
+      lm[31] = { x: 0.42, y: 0.91, z: -0.04, visibility: 1 };  // L toe
+      lm[32] = { x: 0.58, y: 0.91, z: -0.04, visibility: 1 };  // R toe
+
+      // Face (fill intermediate points)
+      lm[1] = { x: 0.48, y: 0.10, z: 0, visibility: 1 };
+      lm[2] = { x: 0.47, y: 0.10, z: 0, visibility: 1 };
+      lm[3] = { x: 0.46, y: 0.10, z: 0, visibility: 1 };
+      lm[4] = { x: 0.52, y: 0.10, z: 0, visibility: 1 };
+      lm[5] = { x: 0.53, y: 0.10, z: 0, visibility: 1 };
+      lm[6] = { x: 0.54, y: 0.10, z: 0, visibility: 1 };
+      lm[9] = { x: 0.48, y: 0.13, z: 0, visibility: 1 };
+      lm[10] = { x: 0.52, y: 0.13, z: 0, visibility: 1 };
+
+      return lm;
+    }
+
+    let landmarks = makeIdlePose();
+    let dragging = -1;
+    let hoverJoint = -1;
+    let activeAnim = null;
+    let animTime = 0;
+
+    // ── Preset poses ────────────────────────────────────────────────────────
+    const POSES = {
+      idle: () => makeIdlePose(),
+      tpose: () => {
+        const lm = makeIdlePose();
+        // Arms straight out
+        lm[13] = { x: 0.22, y: 0.25, z: 0, visibility: 1 }; // L elbow
+        lm[14] = { x: 0.78, y: 0.25, z: 0, visibility: 1 }; // R elbow
+        lm[15] = { x: 0.10, y: 0.25, z: 0, visibility: 1 }; // L wrist
+        lm[16] = { x: 0.90, y: 0.25, z: 0, visibility: 1 }; // R wrist
+        lm[17].x = 0.08; lm[17].y = 0.25;
+        lm[18].x = 0.92; lm[18].y = 0.25;
+        lm[19].x = 0.08; lm[19].y = 0.26;
+        lm[20].x = 0.92; lm[20].y = 0.26;
+        lm[21].x = 0.09; lm[21].y = 0.24;
+        lm[22].x = 0.91; lm[22].y = 0.24;
+        return lm;
+      },
+      armsUp: () => {
+        const lm = makeIdlePose();
+        lm[13] = { x: 0.35, y: 0.12, z: 0, visibility: 1 };
+        lm[14] = { x: 0.65, y: 0.12, z: 0, visibility: 1 };
+        lm[15] = { x: 0.38, y: 0.02, z: 0, visibility: 1 };
+        lm[16] = { x: 0.62, y: 0.02, z: 0, visibility: 1 };
+        return lm;
+      },
+      squat: () => {
+        const lm = makeIdlePose();
+        // Lower hips, bend knees
+        lm[23] = { x: 0.40, y: 0.60, z: 0, visibility: 1 };
+        lm[24] = { x: 0.60, y: 0.60, z: 0, visibility: 1 };
+        lm[25] = { x: 0.35, y: 0.73, z: 0, visibility: 1 };
+        lm[26] = { x: 0.65, y: 0.73, z: 0, visibility: 1 };
+        lm[27] = { x: 0.40, y: 0.88, z: 0, visibility: 1 };
+        lm[28] = { x: 0.60, y: 0.88, z: 0, visibility: 1 };
+        // Arms forward for balance
+        lm[13] = { x: 0.32, y: 0.30, z: -0.15, visibility: 1 };
+        lm[14] = { x: 0.68, y: 0.30, z: -0.15, visibility: 1 };
+        lm[15] = { x: 0.35, y: 0.35, z: -0.25, visibility: 1 };
+        lm[16] = { x: 0.65, y: 0.35, z: -0.25, visibility: 1 };
+        return lm;
+      },
+      wave: () => {
+        const lm = makeIdlePose();
+        // Right arm waving
+        lm[14] = { x: 0.72, y: 0.12, z: 0, visibility: 1 };
+        lm[16] = { x: 0.78, y: 0.04, z: 0, visibility: 1 };
+        return lm;
+      },
+      kick: () => {
+        const lm = makeIdlePose();
+        // Right leg kick forward
+        lm[26] = { x: 0.65, y: 0.60, z: -0.2, visibility: 1 };
+        lm[28] = { x: 0.72, y: 0.55, z: -0.3, visibility: 1 };
+        return lm;
+      },
+    };
+
+    // ── Smooth interpolation to target pose ──────────────────────────────────
+    let targetLandmarks = null;
+    let interpolating = false;
+
+    function lerpLandmarks(a, b, t) {
+      return a.map((l, i) => ({
+        x: l.x + (b[i].x - l.x) * t,
+        y: l.y + (b[i].y - l.y) * t,
+        z: l.z + (b[i].z - l.z) * t,
+        visibility: l.visibility
+      }));
+    }
+
+    window.setPose = function(name) {
+      activeAnim = null;
+      document.querySelectorAll('#puppet-controls button').forEach(b => b.classList.remove('active'));
+      if (POSES[name]) {
+        targetLandmarks = POSES[name]();
+        interpolating = true;
+      }
+    };
+
+    // ── Animations ──────────────────────────────────────────────────────────
+    window.toggleAnim = function(name) {
+      if (activeAnim === name) {
+        activeAnim = null;
+        document.getElementById(`btn-${name}`).classList.remove('active');
+        document.getElementById(`btn-${name}`).textContent = `▶ ${name.toUpperCase()}`;
+        return;
+      }
+      activeAnim = name;
+      animTime = 0;
+      document.querySelectorAll('#puppet-controls button').forEach(b => b.classList.remove('active'));
+      document.getElementById(`btn-${name}`).classList.add('active');
+      document.getElementById(`btn-${name}`).textContent = `■ ${name.toUpperCase()}`;
+    };
+
+    function animateWalk(t) {
+      const lm = makeIdlePose();
+      const phase = Math.sin(t * 3);
+      const halfPhase = Math.sin(t * 3 + Math.PI);
+
+      // Arm swing
+      lm[13].y = 0.35 + phase * 0.05;
+      lm[15].y = 0.48 + phase * 0.06;
+      lm[14].y = 0.35 + halfPhase * 0.05;
+      lm[16].y = 0.48 + halfPhase * 0.06;
+
+      // Leg swing
+      lm[25].y = 0.68 + phase * 0.04;
+      lm[25].x = 0.42 + phase * 0.02;
+      lm[27].y = 0.86 + phase * 0.03;
+      lm[27].x = 0.42 + phase * 0.03;
+
+      lm[26].y = 0.68 + halfPhase * 0.04;
+      lm[26].x = 0.58 + halfPhase * 0.02;
+      lm[28].y = 0.86 + halfPhase * 0.03;
+      lm[28].x = 0.58 + halfPhase * 0.03;
+
+      // Slight torso sway
+      lm[0].x = 0.50 + Math.sin(t * 1.5) * 0.01;
+
+      return lm;
+    }
+
+    function animateDance(t) {
+      const lm = makeIdlePose();
+      const s1 = Math.sin(t * 4);
+      const s2 = Math.sin(t * 4 + Math.PI / 2);
+      const s3 = Math.sin(t * 2);
+
+      // Arm dance moves
+      lm[13] = { x: 0.28 + s1 * 0.08, y: 0.18 + Math.abs(s2) * 0.1, z: 0, visibility: 1 };
+      lm[15] = { x: 0.22 + s2 * 0.10, y: 0.08 + Math.abs(s1) * 0.12, z: 0, visibility: 1 };
+      lm[14] = { x: 0.72 - s1 * 0.08, y: 0.18 + Math.abs(s2) * 0.1, z: 0, visibility: 1 };
+      lm[16] = { x: 0.78 - s2 * 0.10, y: 0.08 + Math.abs(s1) * 0.12, z: 0, visibility: 1 };
+
+      // Body bounce
+      const bounce = Math.abs(Math.sin(t * 8)) * 0.02;
+      lm[23].y = 0.52 + bounce;
+      lm[24].y = 0.52 + bounce;
+      lm[11].y = 0.25 + bounce * 0.5;
+      lm[12].y = 0.25 + bounce * 0.5;
+      lm[0].y = 0.12 + bounce * 0.3;
+
+      // Knee bend
+      lm[25].y = 0.70 + s3 * 0.03;
+      lm[26].y = 0.70 - s3 * 0.03;
+      lm[27].y = 0.88 + Math.max(0, s3) * 0.02;
+      lm[28].y = 0.88 - Math.min(0, s3) * 0.02;
+
+      // Hip sway
+      lm[23].x = 0.42 + s3 * 0.02;
+      lm[24].x = 0.58 + s3 * 0.02;
+
+      return lm;
+    }
+
+    // ── Mouse interaction ──────────────────────────────────────────────────
+    const jointLabel = document.getElementById('joint-label');
+    const dragInfo = document.getElementById('dragging-info');
+
+    function getCanvasPos(e) {
+      const rect = puppetCanvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) / rect.width,
+        y: (e.clientY - rect.top) / rect.height
+      };
+    }
+
+    function findNearestJoint(pos, threshold = 0.04) {
+      let minDist = Infinity, nearest = -1;
+      for (const idx of DRAGGABLE) {
+        const lm = landmarks[idx];
+        const dx = lm.x - pos.x;
+        const dy = lm.y - pos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < minDist && dist < threshold) {
+          minDist = dist;
+          nearest = idx;
+        }
+      }
+      return nearest;
+    }
+
+    puppetCanvas.addEventListener('mousedown', (e) => {
+      const pos = getCanvasPos(e);
+      const idx = findNearestJoint(pos);
+      if (idx >= 0) {
+        dragging = idx;
+        activeAnim = null;  // stop any running animation
+        document.querySelectorAll('#puppet-controls button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('#puppet-controls button[id^="btn-"]').forEach(b => {
+          b.textContent = `▶ ${b.id.replace('btn-', '').toUpperCase()}`;
+        });
+        dragInfo.textContent = `dragging: ${JOINT_NAMES[idx]}`;
+        dragInfo.style.color = '#ff5500';
+      }
+    });
+
+    puppetCanvas.addEventListener('mousemove', (e) => {
+      const pos = getCanvasPos(e);
+      if (dragging >= 0) {
+        landmarks[dragging].x = Math.max(0.02, Math.min(0.98, pos.x));
+        landmarks[dragging].y = Math.max(0.02, Math.min(0.98, pos.y));
+      } else {
+        hoverJoint = findNearestJoint(pos);
+        if (hoverJoint >= 0) {
+          jointLabel.style.display = 'block';
+          jointLabel.style.left = (e.clientX + 12) + 'px';
+          jointLabel.style.top = (e.clientY - 8) + 'px';
+          jointLabel.textContent = JOINT_NAMES[hoverJoint];
+          puppetCanvas.style.cursor = 'grab';
+        } else {
+          jointLabel.style.display = 'none';
+          puppetCanvas.style.cursor = 'default';
+        }
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (dragging >= 0) {
+        dragInfo.textContent = 'drag any joint';
+        dragInfo.style.color = '#ffaa00';
+      }
+      dragging = -1;
+    });
+
+    puppetCanvas.addEventListener('mouseleave', () => {
+      jointLabel.style.display = 'none';
+    });
+
+    // ── Draw puppet ─────────────────────────────────────────────────────────
+    function drawPuppet() {
+      pctx.clearRect(0, 0, W, H);
+
+      // Background grid
+      pctx.strokeStyle = '#1a1a2e';
+      pctx.lineWidth = 0.5;
+      for (let i = 0; i < W; i += 20) {
+        pctx.beginPath(); pctx.moveTo(i, 0); pctx.lineTo(i, H); pctx.stroke();
+      }
+      for (let i = 0; i < H; i += 20) {
+        pctx.beginPath(); pctx.moveTo(0, i); pctx.lineTo(W, i); pctx.stroke();
+      }
+
+      // Draw connections
+      for (const [a, b] of CONNECTIONS) {
+        const la = landmarks[a], lb = landmarks[b];
+        pctx.beginPath();
+        pctx.moveTo(la.x * W, la.y * H);
+        pctx.lineTo(lb.x * W, lb.y * H);
+        pctx.strokeStyle = '#00ff88';
+        pctx.lineWidth = 2.5;
+        pctx.stroke();
+
+        // Glow effect
+        pctx.beginPath();
+        pctx.moveTo(la.x * W, la.y * H);
+        pctx.lineTo(lb.x * W, lb.y * H);
+        pctx.strokeStyle = '#00ff8833';
+        pctx.lineWidth = 6;
+        pctx.stroke();
+      }
+
+      // Draw head circle
+      const nose = landmarks[0];
+      pctx.beginPath();
+      pctx.arc(nose.x * W, (nose.y - 0.03) * H, 14, 0, Math.PI * 2);
+      pctx.strokeStyle = '#00ff88';
+      pctx.lineWidth = 2;
+      pctx.stroke();
+      pctx.beginPath();
+      pctx.arc(nose.x * W, (nose.y - 0.03) * H, 14, 0, Math.PI * 2);
+      pctx.strokeStyle = '#00ff8822';
+      pctx.lineWidth = 8;
+      pctx.stroke();
+
+      // Draw joints
+      for (const idx of DRAGGABLE) {
+        const lm = landmarks[idx];
+        const x = lm.x * W, y = lm.y * H;
+        const isActive = dragging === idx;
+        const isHover = hoverJoint === idx && dragging < 0;
+        const r = isActive ? 8 : (isHover ? 7 : 5);
+
+        // Glow
+        if (isActive || isHover) {
+          pctx.beginPath();
+          pctx.arc(x, y, r + 6, 0, Math.PI * 2);
+          pctx.fillStyle = isActive ? '#ff550033' : '#00ff8833';
+          pctx.fill();
+        }
+
+        pctx.beginPath();
+        pctx.arc(x, y, r, 0, Math.PI * 2);
+        pctx.fillStyle = isActive ? '#ff5500' : (isHover ? '#ffaa00' : '#ff5500');
+        pctx.fill();
+        pctx.strokeStyle = '#fff';
+        pctx.lineWidth = 1;
+        pctx.stroke();
+      }
+    }
+
+    // ── Main loop ───────────────────────────────────────────────────────────
+    let lastTime = performance.now();
+    let frames = 0;
+    const fpsEl = document.getElementById('fps-counter');
+
+    function loop() {
+      requestAnimationFrame(loop);
+
+      const now = performance.now();
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+
+      // Animation
+      if (activeAnim) {
+        animTime += dt;
+        if (activeAnim === 'walk') landmarks = animateWalk(animTime);
+        else if (activeAnim === 'dance') landmarks = animateDance(animTime);
+      }
+
+      // Smooth interpolation for preset poses
+      if (interpolating && targetLandmarks) {
+        landmarks = lerpLandmarks(landmarks, targetLandmarks, 0.12);
+        const diff = landmarks.reduce((sum, l, i) =>
+          sum + Math.abs(l.x - targetLandmarks[i].x) + Math.abs(l.y - targetLandmarks[i].y), 0);
+        if (diff < 0.01) {
+          landmarks = targetLandmarks.map(l => ({...l}));
+          interpolating = false;
+          targetLandmarks = null;
+        }
+      }
+
+      // Update avatar
+      applyPoseToAvatar(landmarks);
+
+      // Draw puppet
+      drawPuppet();
+
+      // Update controls/renderer
+      controls.update();
+      renderer.render(scene, camera);
+
+      // FPS
+      if (++frames, performance.now() - lastTime > 0) {
+        if (frames % 30 === 0) {
+          fpsEl.textContent = `FPS: ${Math.round(1 / dt)}`;
+        }
+      }
+    }
+
+    loop();
+
+    // Socket (just for compatibility, not used in test mode)
+    const socket = io();
+    socket.on('connect', () => console.log('Socket connected (test mode)'));
+
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>3D Digital Twin</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      overflow: hidden;
+      background: #0a0a0f;
+      font-family: 'Courier New', monospace;
+    }
+
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      color: #00ff88;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 8px #00ff88;
+      pointer-events: none;
+      line-height: 1.8;
+    }
+
+    #status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff4444;
+      margin-right: 6px;
+      vertical-align: middle;
+      transition: background 0.3s;
+    }
+
+    #status-dot.active {
+      background: #00ff88;
+      box-shadow: 0 0 8px #00ff88;
+    }
+
+    #webcam-pip {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 320px;
+      height: 240px;
+      border: 1px solid #00ff8844;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 0 20px #00ff8822;
+    }
+
+    #webcam-pip video,
+    #webcam-pip canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    #webcam-pip canvas {
+      pointer-events: none;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a0f;
+      color: #00ff88;
+      font-size: 14px;
+      letter-spacing: 0.15em;
+      z-index: 100;
+    }
+
+    #loading-bar-wrap {
+      width: 240px;
+      height: 2px;
+      background: #1a1a2e;
+      margin-top: 20px;
+      border-radius: 2px;
+    }
+
+    #loading-bar {
+      height: 100%;
+      width: 0%;
+      background: #00ff88;
+      border-radius: 2px;
+      transition: width 0.3s;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.152.2/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.152.2/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+
+<body>
+
+  <div id="loading">
+    <div>INITIALISING DIGITAL TWIN</div>
+    <div id="loading-bar-wrap">
+      <div id="loading-bar"></div>
+    </div>
+  </div>
+  <div id="canvas-container"></div>
+  <div id="hud">
+    <div><span id="status-dot"></span><span id="status-text">Initialising MediaPipe...</span></div>
+    <div id="fps-counter">FPS: —</div>
+    <div id="landmark-count">Landmarks: 0</div>
+    <div id="pose-class" style="margin-top:10px; border-top:1px solid #00ff8844; padding-top:8px;">
+      <div style="color:#ff8800; font-size:11px; letter-spacing:0.1em;">POSE CLASSIFICATION</div>
+      <div id="class-6" style="margin-top:4px;">Body: —</div>
+      <div id="class-20" style="margin-top:2px;">Group: —</div>
+      <div id="class-82" style="margin-top:2px;">Pose: —</div>
+      <div id="class-conf" style="margin-top:4px; font-size:10px; color:#666;">Confidence: —</div>
+    </div>
+  </div>
+  <div id="webcam-pip">
+    <video id="webcam-video" autoplay muted playsinline></video>
+    <canvas id="skeleton-canvas"></canvas>
+  </div>
+
+  <!-- MediaPipe Pose (browser-side) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const LM = {
+      NOSE: 0, LEFT_EAR: 7, RIGHT_EAR: 8,
+      LEFT_SHOULDER: 11, RIGHT_SHOULDER: 12,
+      LEFT_ELBOW: 13, RIGHT_ELBOW: 14,
+      LEFT_WRIST: 15, RIGHT_WRIST: 16,
+      LEFT_HIP: 23, RIGHT_HIP: 24,
+      LEFT_KNEE: 25, RIGHT_KNEE: 26,
+      LEFT_ANKLE: 27, RIGHT_ANKLE: 28,
+    };
+
+    // ── Scene ────────────────────────────────────────────────────────────────────
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0f);
+    scene.fog = new THREE.Fog(0x0a0a0f, 10, 30);
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 100);
+    camera.position.set(0, 1.4, 3.5);
+    camera.lookAt(0, 1.0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+    controls.target.set(0, 1.0, 0); controls.minDistance = 1.0; controls.maxDistance = 8.0;
+    controls.update();
+
+    scene.add(new THREE.AmbientLight(0x8899ff, 0.35));
+    const kl = new THREE.DirectionalLight(0xffffff, 1.2);
+    kl.position.set(2, 4, 3); kl.castShadow = true; kl.shadow.mapSize.set(1024, 1024); scene.add(kl);
+    const fl = new THREE.DirectionalLight(0x4488ff, 0.4); fl.position.set(-3, 2, -2); scene.add(fl);
+    const rl = new THREE.DirectionalLight(0x00ff88, 0.3); rl.position.set(0, 3, -4); scene.add(rl);
+
+    const grid = new THREE.GridHelper(12, 20, 0x00ff88, 0x112211);
+    grid.material.opacity = 0.25; grid.material.transparent = true; scene.add(grid);
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(12, 12),
+      new THREE.MeshStandardMaterial({ color: 0x0d0d1a, roughness: 1 })
+    );
+    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ── Coordinate conversion ────────────────────────────────────────────────────
+    // MediaPipe JS: X 0→1 (mirrored by selfie mode), Y 0→1 top→bottom, Z depth
+    // Three.js:  Y up, right-handed
+    function lmToVec3(lm) {
+      return new THREE.Vector3(
+        (lm.x - 0.5) * 2,
+        -(lm.y - 0.5) * 2,
+        -lm.z
+      );
+    }
+    // ── Smoothing ────────────────────────────────────────────────────────────────
+    const smoothStore = {};
+    function smoothQuaternion(name, q, alpha) {
+      if (!smoothStore[name]) smoothStore[name] = q.clone();
+      smoothStore[name].slerp(q, alpha);
+      return smoothStore[name];
+    }
+    function getBoneRestDir(bone) {
+      if (!bone || !bone.children.length) return new THREE.Vector3(0, 1, 0);
+
+      const child = bone.children[0];
+
+      const dir = new THREE.Vector3()
+        .subVectors(child.position, new THREE.Vector3(0, 0, 0))
+        .normalize();
+
+      return dir;
+    }
+    // ── Core bone rotation ───────────────────────────────────────────────────────
+    function applyBoneRotation(bone, startLM, endLM, restDir, alpha, invertDir = false) {
+      if (!bone) return;
+
+      let worldDir = new THREE.Vector3().subVectors(endLM, startLM).normalize();
+      if (invertDir) worldDir.negate();
+
+      const pq = new THREE.Quaternion();
+      if (bone.parent) bone.parent.getWorldQuaternion(pq);
+
+      const localDir = worldDir.clone().applyQuaternion(pq.clone().invert());
+
+      const q = new THREE.Quaternion().setFromUnitVectors(
+        restDir.clone().normalize(),
+        localDir.normalize()
+      );
+
+      bone.quaternion.copy(smoothQuaternion(bone.name, q, alpha));
+    }
+    // ── Rest directions — derived from GLB bind pose ─────────────────────────────
+    const R = {
+      LeftArm: new THREE.Vector3(0, 1, 0),
+      RightArm: new THREE.Vector3(0, 1, 0),
+      LeftForeArm: new THREE.Vector3(0, 1, 0),
+      RightForeArm: new THREE.Vector3(0, 1, 0),
+
+      LeftUpLeg: new THREE.Vector3(0, -1, 0),
+      RightUpLeg: new THREE.Vector3(0, -1, 0),
+
+      LeftLeg: new THREE.Vector3(0, 0, 1),
+      RightLeg: new THREE.Vector3(0, 1, 0),
+
+      Spine: new THREE.Vector3(0, 1, 0),
+      Spine1: new THREE.Vector3(0, 1, 0),
+      Neck: new THREE.Vector3(0, 1, 0),
+    };
+
+    // ── Avatar ───────────────────────────────────────────────────────────────────
+    const bones = {};
+    const restQuaternions = {};
+    let avatarLoaded = false;
+
+    new GLTFLoader().load(
+      '/static/avatar.glb',
+      (gltf) => {
+        const model = gltf.scene;
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const scale = 1.75 / size.y;
+        model.scale.setScalar(scale);
+        model.position.set(
+          -box.getCenter(new THREE.Vector3()).x * scale,
+          -box.min.y * scale,
+          -box.getCenter(new THREE.Vector3()).z * scale
+        );
+        model.traverse((obj) => {
+          if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+          if (obj.name) { bones[obj.name] = obj; restQuaternions[obj.name] = obj.quaternion.clone(); }
+        });
+        scene.add(model);
+        renderer.render(scene, camera);   // populate world matrices now
+        avatarLoaded = true;
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('loading-bar').style.width = '100%';
+        console.log("✅ Bones:", Object.keys(bones).filter(n => n.includes('mixamo')));
+      },
+      (xhr) => { if (xhr.total) document.getElementById('loading-bar').style.width = Math.round(xhr.loaded / xhr.total * 90) + '%'; },
+      (err) => { console.error("❌ GLB error:", err); }
+    );
+
+    // ── Pose application ─────────────────────────────────────────────────────────
+    function applyPoseToAvatar(lm) {
+      if (!avatarLoaded) return;
+
+      const ALPHA = 0.22;
+      const ALPHA_SLOW = ALPHA * 0.55;
+
+      const lS = lmToVec3(lm[LM.LEFT_SHOULDER]);
+      const rS = lmToVec3(lm[LM.RIGHT_SHOULDER]);
+      const lE = lmToVec3(lm[LM.LEFT_ELBOW]);
+      const rE = lmToVec3(lm[LM.RIGHT_ELBOW]);
+      const lW = lmToVec3(lm[LM.LEFT_WRIST]);
+      const rW = lmToVec3(lm[LM.RIGHT_WRIST]);
+      const lH = lmToVec3(lm[LM.LEFT_HIP]);
+      const rH = lmToVec3(lm[LM.RIGHT_HIP]);
+      const lK = lmToVec3(lm[LM.LEFT_KNEE]);
+      const rK = lmToVec3(lm[LM.RIGHT_KNEE]);
+      const lA = lmToVec3(lm[LM.LEFT_ANKLE]);
+      const rA = lmToVec3(lm[LM.RIGHT_ANKLE]);
+      const nose = lmToVec3(lm[LM.NOSE]);
+      R.LeftLeg = getBoneRestDir(bones['mixamorig1_LeftLeg']);
+      R.RightLeg = getBoneRestDir(bones['mixamorig1_RightLeg']);
+      const sMid = new THREE.Vector3().addVectors(lS, rS).multiplyScalar(0.5);
+      const hMid = new THREE.Vector3().addVectors(lH, rH).multiplyScalar(0.5);
+
+      // Spine
+      applyBoneRotation(bones['mixamorig1_Spine'], hMid, sMid, R.Spine, ALPHA_SLOW);
+      applyBoneRotation(bones['mixamorig1_Spine1'], hMid, sMid, R.Spine1, ALPHA_SLOW);
+
+      // Head
+      applyBoneRotation(bones['mixamorig1_Neck'], sMid, nose, R.Neck, ALPHA_SLOW);
+
+      // Arms
+      applyBoneRotation(bones['mixamorig1_LeftArm'], lS, lE, R.LeftArm, ALPHA);
+      applyBoneRotation(bones['mixamorig1_LeftForeArm'], lE, lW, R.LeftForeArm, ALPHA);
+      applyBoneRotation(bones['mixamorig1_RightArm'], rS, rE, R.RightArm, ALPHA);
+      applyBoneRotation(bones['mixamorig1_RightForeArm'], rE, rW, R.RightForeArm, ALPHA);
+
+      // Legs — visibility guard prevents jitter when landmarks are occluded
+      const kneesVisible = lm[LM.LEFT_KNEE].visibility > 0.40 &&
+        lm[LM.RIGHT_KNEE].visibility > 0.40;
+      const anklesVisible = lm[LM.LEFT_ANKLE].visibility > 0.35 &&
+        lm[LM.RIGHT_ANKLE].visibility > 0.35;
+
+      if (kneesVisible) {
+        applyBoneRotation(bones['mixamorig1_LeftUpLeg'], lK, lH, R.LeftUpLeg, ALPHA);
+        applyBoneRotation(bones['mixamorig1_RightUpLeg'], rK, rH, R.RightUpLeg, ALPHA);
+        fixLegTwist(bones['mixamorig1_LeftUpLeg']);
+        fixLegTwist(bones['mixamorig1_RightUpLeg']);
+
+      }
+      if (kneesVisible && anklesVisible) {
+        applyBoneRotation(bones['mixamorig1_LeftLeg'], lA, lK, R.LeftLeg, ALPHA, true);
+        applyBoneRotation(bones['mixamorig1_RightLeg'], rA, rK, R.RightLeg, ALPHA, true);
+        fixFootPitch(bones['mixamorig1_LeftFoot']);
+        fixFootPitch(bones['mixamorig1_RightFoot']);
+
+      }
+    }
+    function fixFootPitch(bone) {
+      if (!bone) return;
+
+      const euler = new THREE.Euler().setFromQuaternion(bone.quaternion, 'XYZ');
+
+      if (euler.x < 0) {
+        euler.x = 0;
+      }
+
+      bone.quaternion.setFromEuler(euler);
+    }
+    function fixLegTwist(bone) {
+      if (!bone) return;
+
+      const twist = new THREE.Quaternion();
+      twist.setFromAxisAngle(new THREE.Vector3(0, -1, 0), Math.PI);
+
+      bone.quaternion.multiply(twist);
+    }
+
+    // ── MediaPipe Pose (browser-side) ────────────────────────────────────────────
+    const videoEl = document.getElementById('webcam-video');
+    const canvasEl = document.getElementById('skeleton-canvas');
+    const canvasCtx = canvasEl.getContext('2d');
+    const dot = document.getElementById('status-dot');
+    const stText = document.getElementById('status-text');
+    const lmCounter = document.getElementById('landmark-count');
+
+    // Keep Socket.IO for status display (optional)
+    const socket = io();
+    socket.on('connect', () => console.log('Socket connected'));
+    socket.on('disconnect', () => console.log('Socket disconnected'));
+
+    // Set up MediaPipe Pose
+    const mpPose = new Pose({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    });
+
+    mpPose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+      selfieMode: true       // mirrors the image — same as cv2.flip(frame, 1)
+    });
+
+    mpPose.onResults((results) => {
+      // Draw webcam + skeleton overlay on the PiP canvas
+      canvasEl.width = videoEl.videoWidth || 640;
+      canvasEl.height = videoEl.videoHeight || 480;
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+
+      // Draw the camera frame
+      canvasCtx.drawImage(results.image, 0, 0, canvasEl.width, canvasEl.height);
+
+      if (results.poseLandmarks) {
+        // Draw skeleton on the PiP canvas
+        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS,
+          { color: '#00FF88', lineWidth: 2 });
+        drawLandmarks(canvasCtx, results.poseLandmarks,
+          { color: '#FF5500', lineWidth: 1, radius: 3 });
+
+        // Update HUD
+        dot.classList.add('active');
+        stText.textContent = 'Pose tracking active';
+        lmCounter.textContent = `Landmarks: ${results.poseLandmarks.length}`;
+
+        // Convert to format matching the old server data and drive the avatar
+        const landmarks = results.poseLandmarks.map(lm => ({
+          x: lm.x,
+          y: lm.y,
+          z: lm.z,
+          visibility: lm.visibility
+        }));
+        applyPoseToAvatar(landmarks);
+
+        // ── Pose Classification (throttled to every 500ms) ──
+        const now = performance.now();
+        if (!window._lastClassifyTime || now - window._lastClassifyTime > 500) {
+          window._lastClassifyTime = now;
+          fetch('/classify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ landmarks })
+          })
+          .then(r => {
+            if (!r.ok) { console.warn('[CLASSIFY] HTTP', r.status); return null; }
+            return r.json();
+          })
+          .then(data => {
+            if (!data || data.error) { console.warn('[CLASSIFY]', data?.error); return; }
+            if (data.label_6) {
+              document.getElementById('class-6').textContent =
+                `Body: ${data.label_6.class} (${(data.label_6.confidence * 100).toFixed(0)}%)`;
+            }
+            if (data.label_20) {
+              document.getElementById('class-20').textContent =
+                `Group: ${data.label_20.class} (${(data.label_20.confidence * 100).toFixed(0)}%)`;
+            }
+            if (data.label_82) {
+              document.getElementById('class-82').textContent =
+                `Pose: ${data.label_82.class} (${(data.label_82.confidence * 100).toFixed(0)}%)`;
+            }
+            if (data.label_6) {
+              document.getElementById('class-conf').textContent =
+                `Confidence: ${(data.label_6.confidence * 100).toFixed(1)}% / ${(data.label_20?.confidence * 100 || 0).toFixed(1)}% / ${(data.label_82?.confidence * 100 || 0).toFixed(1)}%`;
+            }
+          })
+          .catch(e => console.error('[CLASSIFY] fetch error:', e));
+        }
+      } else {
+        dot.classList.remove('active');
+        stText.textContent = 'No pose detected — step into frame';
+        lmCounter.textContent = 'Landmarks: 0';
+      }
+
+      canvasCtx.restore();
+    });
+
+    // Start camera via MediaPipe Camera utility
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' },
+          audio: false
+        });
+        videoEl.srcObject = stream;
+        await videoEl.play();
+
+        stText.textContent = 'Camera active — loading pose model...';
+
+        // Use MediaPipe Camera utility for frame-by-frame processing
+        const mpCamera = new Camera(videoEl, {
+          onFrame: async () => {
+            await mpPose.send({ image: videoEl });
+          },
+          width: 640,
+          height: 480
+        });
+        mpCamera.start();
+
+        console.log("✅ MediaPipe Pose started in browser");
+      } catch (err) {
+        console.error("❌ Camera error:", err);
+        stText.textContent = 'Camera access denied';
+        document.getElementById('webcam-pip').style.display = 'none';
+      }
+    }
+
+    startCamera();
+
+    // ── Render loop ──────────────────────────────────────────────────────────────
+    let frames = 0, lastT = performance.now();
+    const fpsEl = document.getElementById('fps-counter');
+    (function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+      if (++frames, performance.now() - lastT >= 1000) {
+        fpsEl.textContent = `FPS: ${frames}`; frames = 0; lastT = performance.now();
+      }
+    })();
+  </script>
+</body>
+
+</html>
