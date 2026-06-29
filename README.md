@@ -1,5 +1,5 @@
 # Yoga Pose Classification — Multi-Level LightGBM Classifier on Yoga-82
-*Collaborative research project — [Sruthi Suresh Kumar](https://github.com/sruthisureshkumar-arch) & [ShadyVoxx](https://github.com/ShadyVoxx)*
+*Collaborative research project — [Sruthi Sureshkumar](https://github.com/sruthisureshkumar-arch) & [ShadyVoxx](https://github.com/ShadyVoxx)*
 
 A real-time yoga pose classification system built on the Yoga-82 dataset, using MediaPipe for landmark extraction and LightGBM for multi-level classification. Runs live in the browser via a Flask + Socket.IO backend.
 
