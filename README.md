@@ -1,9 +1,9 @@
 # Yoga Pose Classification
-*by Sruthi Suresh Kumar*
+*A collaborative research project by [Sruthi Suresh Kumar](https://github.com/sruthisureshkumar-arch) & [ShadyVoxx](https://github.com/ShadyVoxx)*
 
 A real-time yoga pose classification system built on the Yoga-82 dataset, using MediaPipe for landmark extraction and LightGBM for multi-level classification. Runs live in the browser via a Flask + Socket.IO backend.
 
-> **Phase 1 of a two-phase ML implementation.**
+> **Phase 1 of a two-phase ML implementation.*
 > This repo establishes the classification foundation. Phase 2 extends it into a full real-time pose correction coaching system with step-by-step verification and a local LLM — running entirely offline:
 > → [**yoga-pose-correction-ai**](https://github.com/ShadyVoxx/yoga-pose-correction-ai)
 
@@ -65,7 +65,7 @@ templates/               # Frontend HTML
 
 This repo is the classification foundation. It has been extended into a full pose correction coaching system with step-by-step verification, posture descriptor matching, and local LLM feedback — running entirely offline with no cloud API dependency.
 
-**Phase 2 highlights:**
+**Phase 2 highlights:*
 - Step-level classification across 74 classes (4–7 steps per pose, 13 Common Yoga Protocol poses)
 - 89.1% validation accuracy on 164,670 training samples (4-layer MLP: 512-256-128-64)
 - IMU-ready 117-float feature vector (99 normalised landmarks + 12 joint angles + 6 sensor slots)
