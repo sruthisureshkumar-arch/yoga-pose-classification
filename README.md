@@ -1,4 +1,5 @@
 # Yoga Pose Classification
+*by Sruthi Suresh Kumar*
 
 A real-time yoga pose classification system built on the Yoga-82 dataset, using MediaPipe for landmark extraction and LightGBM for multi-level classification. Runs live in the browser via a Flask + Socket.IO backend.
 
